@@ -2,6 +2,7 @@ from server.enums import TeamStatus
 from server.storage import Storage
 from tournament.storage import SEASONS_DIR
 from tournament.graphics import runner
+from tournament.schema import RegistrationSchema, MemberSchema, TeamSchema
 from secrets import randbelow
 
 
@@ -13,16 +14,24 @@ class Registration(Storage):
         super().__init__("registrations.json", SEASONS_DIR / season_id)
         self.bootstrap()
 
+    def read(self) -> RegistrationSchema:
+        """reads the registration."""
+        data = super().read()
+        return RegistrationSchema.from_dict(data)
+
+    def commit(self, data: RegistrationSchema) -> None:
+        """commits the registration."""
+        super().commit(data.to_dict())
+
     def bootstrap(self):
         """creates the file if not already existing."""
         if not self.path.exists():
-            data = {"teams": {}, "players": {}, "codes": {}}
-            self.commit(data)
+            self.commit(RegistrationSchema())
 
     def is_registered(self, id: str) -> bool:
         """returns whether the discord user is already registered?"""
         db = self.read()
-        players = db.get("players", {})
+        players = db.players
         return id in players
 
     def register(
@@ -42,61 +51,56 @@ class Registration(Storage):
 
         db = self.read()
         # case: team-name already exists
-        if team_name in db["teams"]:
+        if team_name in db.teams:
             return None
         # team_id = f"team-{len(db['teams']) + 1}"
         # we use team-name as team-id
         team_id = team_name
 
-        captain = {
-            "account_id": "",
-            "device_uuid": "",
-            "discord_id": captain_discord_id,
-            "code": captain_code,
-        }
-        db["players"][captain_discord_id] = team_id
-        db["codes"][captain_code] = captain_discord_id
+        captain = MemberSchema(
+            discord_id=captain_discord_id,
+            code=captain_code,
+        )
+        db.players[captain_discord_id] = team_id
+        db.codes[captain_code] = captain_discord_id
 
         members = [captain]
         for discord_id in invited_members:
             members.append(
-                {
-                    "account_id": "",
-                    "device_uuid": "",
-                    "discord_id": discord_id,
-                    "code": "",
-                }
+                MemberSchema(
+                    discord_id=discord_id,
+                )
             )
-            db["players"][discord_id] = team_id
+            db.players[discord_id] = team_id
 
         # saving in players dict will help us do team lookup and verification much faster.
-        db["teams"][team_id] = {
-            "id": team_id,
-            "captain": captain_discord_id,
-            "status": TeamStatus.IN_INVITATION if size > 1 else TeamStatus.UNVERIFIED,
-            "members": members,
-        }
+        db.teams[team_id] = TeamSchema(
+            id=team_id,
+            captain=captain_discord_id,
+            status=TeamStatus.IN_INVITATION if size > 1 else TeamStatus.UNVERIFIED,
+            members=members,
+        )
         self.commit(db)
         return team_id
 
     def delete(self, team_id: str) -> str:
         """deletes the team when someone declines the invitation."""
         db = self.read()
-        team = db["teams"].get(team_id)
+        team = db.teams.get(team_id)
 
-        for member in team["members"]:
-            account_id = member["account_id"]
-            if account_id in db["players"]:
-                del db["players"][account_id]
-            discord_id = member["discord_id"]
-            if discord_id in db["players"]:
-                del db["players"][discord_id]
-            code = member["code"]
-            if code in db["codes"]:
-                del db["codes"][code]
+        for member in team.members:
+            account_id = member.account_id
+            if account_id in db.players:
+                del db.players[account_id]
+            discord_id = member.discord_id
+            if discord_id in db.players:
+                del db.players[discord_id]
+            code = member.code
+            if code in db.codes:
+                del db.codes[code]
 
-        captain = team["captain"]
-        del db["teams"][team_id]
+        captain = team.captain
+        del db.teams[team_id]
         self.commit(db)
         return captain
 
@@ -104,7 +108,7 @@ class Registration(Storage):
         """generates a code for the registration."""
         db = self.read()
         code = f"{randbelow(1_000_000):06d}"
-        if code in db["codes"]:
+        if code in db.codes:
             return self.generate_code()
         return code
 
@@ -112,23 +116,23 @@ class Registration(Storage):
         """accepts invitation from a team."""
         db = self.read()
         # lookup team id from players map
-        team_id = db["players"].get(discord_id)
+        team_id = db.players.get(discord_id)
         if not team_id:
             return False
 
-        team = db["teams"].get(team_id)
+        team = db.teams.get(team_id)
 
-        for member in team["members"]:
-            if member["discord_id"] == discord_id:
-                member["code"] = code
+        for member in team.members:
+            if member.discord_id == discord_id:
+                member.code = code
 
                 # update in codes map
-                db["codes"][code] = discord_id
+                db.codes[code] = discord_id
 
                 # check if everyone on the team has accepted the invitation.
-                if all(m["code"] for m in team["members"]):
+                if all(m.code for m in team.members):
                     # update the team status
-                    team["status"] = TeamStatus.UNVERIFIED
+                    team.status = TeamStatus.UNVERIFIED
 
                 self.commit(db)
                 return True
@@ -137,30 +141,30 @@ class Registration(Storage):
     def verify(self, code: str, account_id: str, device_uuid: str) -> bool | None:
         """verifies the player"""
         db = self.read()
-        discord_id = db["codes"].get(code)
+        discord_id = db.codes.get(code)
         if not discord_id:
             return None
-        team_id = db["players"].get(discord_id)
+        team_id = db.players.get(discord_id)
         if not team_id:
             return False
 
-        team = db["teams"].get(team_id)
+        team = db.teams.get(team_id)
 
-        for member in team["members"]:
-            if member["discord_id"] == discord_id:
+        for member in team.members:
+            if member.discord_id == discord_id:
                 # case: the guy is already verified
-                if member["account_id"]:
+                if member.account_id:
                     return None
-                member["device_uuid"] = device_uuid
-                member["account_id"] = account_id
+                member.device_uuid = device_uuid
+                member.account_id = account_id
 
                 # save in players map for avoiding duplications.
-                db["players"][account_id] = team_id
+                db.players[account_id] = team_id
 
                 # check if everyone on the team has verified.
-                if all(m["account_id"] for m in team["members"]):
+                if all(m.account_id for m in team.members):
                     # update the team status
-                    team["status"] = TeamStatus.VERIFIED
+                    team.status = TeamStatus.VERIFIED
                     data = {
                         "type": "registration",
                         "name": team_id,
@@ -175,15 +179,15 @@ class Registration(Storage):
     def change_uuid(self, discord_id: str, new_uuid: str) -> bool:
         """changes the uuid of a player"""
         db = self.read()
-        team_id = db["players"].get(discord_id)
+        team_id = db.players.get(discord_id)
         if not team_id:
             return False
 
-        team = db["teams"].get(team_id)
+        team = db.teams.get(team_id)
 
-        for member in team["members"]:
-            if member["discord_id"] == discord_id:
-                member["device_uuid"] = new_uuid
+        for member in team.members:
+            if member.discord_id == discord_id:
+                member.device_uuid = new_uuid
                 self.commit(db)
                 return True
         return False

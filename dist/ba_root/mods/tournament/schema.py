@@ -1,12 +1,26 @@
 """all the dataclass schema for tournament."""
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
-
+from dataclasses import asdict, field
+from pydantic.dataclasses import dataclass
+from pydantic import TypeAdapter
 from server.enums import SeriesType, TournamentStage, TournamentType, Status
 
+class BaseSchema:
+    """base schema for all the schemas."""
+    @classmethod
+    def from_dict(cls, data: dict):
+        """validates the data into the schema."""
+        if not data:
+            return cls()
+        return TypeAdapter(cls).validate_python(data)
 
-class SeasonSchema(BaseModel):
+    def to_dict(self) -> dict:
+        """serializes the schmea back into a dict."""
+        return asdict(self)
+
+@dataclass
+class SeasonSchema(BaseSchema):
     """schema for a unique season."""
 
     series: SeriesType = SeriesType.BO3
@@ -15,26 +29,88 @@ class SeasonSchema(BaseModel):
     created_at: str = ""
     participant_role_id: int = 0
 
-
-class TournamentSchema(BaseModel):
+@dataclass
+class TournamentSchema(BaseSchema):
     """Schema for all the seasons."""
 
     active_season: str = "0"
     registrations_status: bool = False
-    seasons: dict[str, SeasonSchema] = Field(default_factory=dict)
+    seasons: dict[str, SeasonSchema] = field(default_factory=dict)
 
-class TeamSchema(BaseModel):
+@dataclass
+class MatchTeamSchema(BaseSchema):
     """schema for a team."""
-    id: int
-    name: str
+    idx: int
+    name: str | None = None
     score: int = 0
     series: int = 0
 
-class MatchSchema(BaseModel):
+@dataclass
+class MatchSchema(BaseSchema):
     """schema for a match."""
-    teams: list[TeamSchema] = Field(default_factory=list)
+    match_id: str
+    teams: list[MatchTeamSchema] = field(default_factory=list)
     status: Status = Status.PENDING
-    winner: TeamSchema | None = None
-    loser: TeamSchema | None = None
-    group_key: str | None = None
-    round_key: str | None = None
+    winner_idx: int | None = None
+    loser_idx: int | None = None
+    group_id: str | None = None
+    round_id: str | None = None
+    last_scores: list[int, int] = field(default_factory=lambda : [0, 0])
+
+@dataclass
+class PendingMatchSchema(BaseSchema):
+    """schema for a pending match."""
+    key: str
+    match: MatchSchema
+    uuids: list[str]
+    players: list[str]
+
+@dataclass
+class RoundSchema(BaseSchema):
+    """schema for a round."""
+    matches: dict[str, MatchSchema] = field(default_factory=dict)
+    status: Status = Status.PENDING
+
+@dataclass
+class GroupSchema(BaseSchema):
+    """schema for a group."""
+    rounds: dict[str, RoundSchema] = field(default_factory=dict)
+    standings: list[str] = field(default_factory=list)
+    standings_sorted: list[dict] = field(default_factory=list)
+    role_id: int = 0
+
+@dataclass
+class GroupStageSchema(BaseSchema):
+    """schema for the group stage."""
+    groups: dict[str, GroupSchema] = field(default_factory=dict)
+    winning_teams_per_group: int = 0
+    status: Status = Status.PENDING
+
+@dataclass
+class BracketsMetaSchema(BaseSchema):
+    """schema for the brackets meta."""
+    active_round: str = ""
+    total_rounds: int = 0
+
+@dataclass
+class MemberSchema(BaseSchema):
+    """schema for a member."""
+    code: str = ""
+    account_id: str = ""
+    device_uuid: str = ""
+    discord_id: str
+
+@dataclass
+class TeamSchema(BaseSchema):
+    """schema for a team."""
+    id: str
+    captain: str
+    status: Status = Status.IN_INVITATION
+    members: list[MemberSchema] = field(default_factory=list)
+
+@dataclass
+class RegistrationSchema(BaseSchema):
+    """schema for the registration."""
+    teams: dict[str, TeamSchema] = field(default_factory=dict)
+    players: dict[str, str] = field(default_factory=dict)
+    codes: dict[str, str] = field(default_factory=dict)

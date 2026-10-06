@@ -1055,9 +1055,9 @@ class ServerManagerApp:
                     flush=True,
                 )
                 if self._auto_restart:
-                    self.restart(immediate=True)
+                    self.restart(immediate=False)
                 else:
-                    self.shutdown(immediate=True)
+                    self.shutdown(immediate=False)
                 self._subprocess_sent_unclean_exit = True
 
     def _reset_subprocess_vars(self) -> None:

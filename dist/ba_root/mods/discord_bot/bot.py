@@ -305,9 +305,9 @@ class TournamentCommands(
         lines = ["**Round matches:**\n"]
 
         for match_index, (key, match) in enumerate(matches.items(), start=1):
-            team1 = match["team1"] or "BYE"
-            team2 = match["team2"] or "BYE"
-            status = match["status"]
+            team1 = match.teams[0].name or "BYE"
+            team2 = match.teams[1].name or "BYE"
+            status = match.status
 
             line = (
                 f"`Match #{match_index}` | "
@@ -340,7 +340,7 @@ class TournamentCommands(
         from tournament.brackets import Brackets
 
         brackets = Brackets(season_id=tournament.active_season)
-        if brackets.read()["active_round"]:
+        if brackets.read_meta().active_round:
             await interaction.response.send_message(
                 "The tournament is already started.",
                 ephemeral=True,
@@ -351,7 +351,7 @@ class TournamentCommands(
 
         # we need to generate the brackets.
         registration = Registration(season_id=brackets.season_id).read()
-        teams = list(registration["teams"].keys())
+        teams = list(registration.teams.keys())
         try:
             is_groupstage = brackets.generate_group_stage(teams=teams)
         except AssertionError:
@@ -366,8 +366,8 @@ class TournamentCommands(
             brackets.send_groupstage_brackets()
             # we need to make/use each group's own role to ping later.
             guild = interaction.guild
-            gs = brackets.read(brackets.group_stage_path)
-            for group_name in gs["groups"]:
+            gs = brackets.read_gs()
+            for group_name in gs.groups:
                 # check if the group already has a role.
                 role = discord.utils.get(guild.roles, name=group_name)
                 if role:
@@ -378,15 +378,15 @@ class TournamentCommands(
                     name=group_name, mentionable=True,
                 )
                 # now we can add the role id to the group.
-                gs["groups"][group_name]["role_id"] = role.id
-            brackets.commit(gs, external_path=brackets.group_stage_path)
+                gs.groups[group_name].role_id = role.id
+            brackets.commit_gs(gs)
         await interaction.followup.send(
             "The tournament has been started!", ephemeral=True
         )
         await asyncio.sleep(30)
-        pings = "### These are the registered players/teams:\n"
+        pings = "### These are the registered players/team captains:\n"
         for index, team in enumerate(teams, start=1):
-            pings += f"{index}. `{team}`: <@{registration['teams'][team]['captain']}>\n"
+            pings += f"{index}. `{team}`: <@{registration.teams[team].captain}>\n"
 
         await interaction.followup.send(pings)
 

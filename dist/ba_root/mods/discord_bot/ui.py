@@ -153,9 +153,9 @@ class TeamInvitationView(ui.LayoutView):
         season_id = tournament.active_season
         registration = Registration(season_id=season_id)
         db = registration.read()
-        user_team_id = db["players"].get(str(interaction.user.id))
+        user_team_id = db.players.get(str(interaction.user.id))
         team_id = interaction.data["custom_id"].split(";")[2]
-        team = db["teams"].get(team_id)
+        team = db.teams.get(team_id)
 
         if not team:
             await interaction.response.send_message(
@@ -196,9 +196,9 @@ class TeamInvitationView(ui.LayoutView):
         season_id = tournament.active_season
         registration = Registration(season_id=season_id)
         db = registration.read()
-        user_team_id = db["players"].get(str(interaction.user.id))
+        user_team_id = db.players.get(str(interaction.user.id))
         team_id = interaction.data["custom_id"].split(";")[2]
-        team = db["teams"].get(team_id)
+        team = db.teams.get(team_id)
 
         if not team:
             await interaction.response.send_message(
@@ -215,8 +215,8 @@ class TeamInvitationView(ui.LayoutView):
         role = get(interaction.guild.roles, name="Participant")
 
         # strip all the members of role.
-        for member in team["members"]:
-            discord_id = member["discord_id"]
+        for member in team.members:
+            discord_id = member.discord_id
             user = interaction.guild.get_member(int(discord_id))
             if user and role in user.roles:
                 await user.remove_roles(role)

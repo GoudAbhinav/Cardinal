@@ -15,19 +15,38 @@ def ready(client: Client):
     if not int(season_id):
         client.error("There is no tournament ongoing.")
         return
-    response = manager.handle_player_ready(account_id=client.account_id)
+    response = manager.handle_player_ready(account_id=client.account_id, uuid=client.public_uuid)
     if response["status"] == "success":
         client.success(response["message"])
         if response.get("start", False):
             from server.utils import success
 
             success(
-                message=f"Tournament match between {manager.active_match['teams'][0]} and {manager.active_match['teams'][1]} is starting in 2 seconds."
+                message=f"Tournament match between {manager.active_match.match.teams[0].name} and {manager.active_match.match.teams[1].name} is starting in 2 seconds."
             )
         return
     if response["status"] == "error":
         client.error(response["message"])
 
+@on_command(name="/pause")
+def pause(client: Client):
+    """pauses the match if everyone agrees."""
+    season_id = tournament.active_season
+    if not int(season_id):
+        client.error("There is no tournament ongoing.")
+        return
+    response = manager.handle_player_pause(account_id=client.account_id)
+    if response["status"] == "success":
+        client.success(response["message"])
+        if response.get("pause", False):
+            from server.utils import success
+
+            success(
+                message=f"Tournament match between {manager.active_match.match.teams[0].name} and {manager.active_match.match.teams[1].name} has been paused."
+            )
+        return
+    if response["status"] == "error":
+        client.error(response["message"])
 
 @on_command(name="/verify", usage="/verify <code>")
 def verify(client: Client, args: list[str]):

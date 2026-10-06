@@ -4,18 +4,19 @@ import bascenev1
 
 from server.enums import Status
 from tournament.brackets import Brackets
+from tournament.schema import MatchSchema, PendingMatchSchema
 
 
 class Manager:
     """manager class for tournament matches."""
 
     def __init__(self):
-        self.pending_matches = {}
+        self.pending_matches: dict[str, PendingMatchSchema] = {}
         self.players = {}
         self.ready_players = {}
         self.pause_players = {}
 
-        self.active_match = None
+        self.active_match: PendingMatchSchema | None = None
 
     def initialize(self, season_id: str):
         """initializes the manager."""
@@ -27,76 +28,54 @@ class Manager:
         """load all pending matches from the database."""
         self.pending_matches.clear()
         self.players.clear()
-        round_path = self.brackets.get_active_round_path()
-        round_data = self.brackets.read(round_path)
-        if not round_data:
-            return
 
-        # if the round is groupstage;
-        if round_path.name == "group-stage.json":
-            for g_key, group in round_data["groups"].items():
-                for r_key, round in group["rounds"].items():
-                    if round["status"] == Status.IN_PROGRESS:
-                        for m_key, match in round["matches"].items():
-                            if match["status"] == Status.PENDING:
-                                self.register_pending_match(
-                                    match_key=m_key,
-                                    team1=match["team1"],
-                                    team2=match["team2"],
-                                    group_key=g_key,
-                                    round_key=r_key,
-                                )
-        else:
-            for m_key, match in round_data["matches"].items():
-                if match["status"] == Status.PENDING:
-                    self.register_pending_match(
-                        match_key=m_key, team1=match["team1"], team2=match["team2"]
-                    )
+        # we need to load all the matches from the rounds.
+        matches = self.brackets.list_matches()
+        for key, match in matches.items():
+            if match.status == Status.PENDING:
+                self.register_pending_match(
+                    key=key,
+                    match=match,
+                )
 
     def register_pending_match(
         self,
-        match_key: str,
-        team1: str,
-        team2: str,
-        group_key: str | None = None,
-        round_key: str | None = None,
+        key: str,
+        match: MatchSchema,
     ):
         """registers a pending match."""
-        if group_key and round_key:
-            # add group and round to the match key.
-            key = f"{group_key}-{round_key}-{match_key}"
-        else:
-            key = match_key
-        players1 = self.extract_from_team_players(team=team1, key="account_id")
-        players2 = self.extract_from_team_players(team=team2, key="account_id")
+        team1 = match.teams[0].name
+        team2 = match.teams[1].name
 
-        self.pending_matches[key] = {
-            "match_key": match_key,
-            "team1": team1,
-            "team2": team2,
-            "uuids": self.extract_from_team_players(team=team1, key="device_uuid")
-            + self.extract_from_team_players(team=team2, key="device_uuid"),
-            "players": players1 + players2,
-            "group_key": group_key,
-            "round_key": round_key,
-        }
+        players1 = self.extract_from_team_players(team1, key="account_id")
+        players2 = self.extract_from_team_players(team2, key="account_id")
 
-        self.ready_players[key] = set()
-        self.pause_players[key] = set()
+        self.pending_matches[key] = PendingMatchSchema(
+            key=key,
+            match=match,
+            uuids=self.extract_from_team_players(team1, key="device_uuid")
+            + self.extract_from_team_players(team2, key="device_uuid"),
+            players=players1 + players2,
+        )
+
+        if key not in self.ready_players:
+            self.ready_players[key] = set()
+        if key not in self.pause_players:
+            self.pause_players[key] = set()
         for team, players in ((team1, players1), (team2, players2)):
             for player in players:
                 self.players[player] = [key, team]
 
-    def extract_from_team_players(self, team: str, key: str) -> list:
+    def extract_from_team_players(self, team_id: str, key: str) -> list:
         """extracts the key from team dict players."""
         return [
-            member[key] for member in self.brackets.get_team(team_id=team)["members"]
+            getattr(member, key) for member in self.brackets.get_team(team_id=team_id).members
         ]
 
-    def handle_player_ready(self, account_id: str) -> dict:
+    def handle_player_ready(self, account_id: str, uuid: str) -> dict:
         """handles the player ready event."""
-        match_key = self.players.get(account_id, [None, None])[0]
-        if not match_key:
+        match_id = self.players.get(account_id, [None, None])[0]
+        if not match_id:
             return {
                 "status": "error",
                 "message": "You are not registered for any matches.",
@@ -106,27 +85,24 @@ class Manager:
         if self.active_match:
             return {"status": "error", "message": "A match is already active."}
 
-        if account_id in self.ready_players.get(match_key, set()):
+        if account_id in self.ready_players.get(match_id, set()):
             return {"status": "error", "message": "You are already ready."}
 
-        self.ready_players[match_key].add(account_id)
-        match = self.pending_matches[match_key]
+        match = self.pending_matches[match_id]
+
+        if uuid not in match.uuids:
+            return {"status": "error", "message": "Your device uuid seems to have changed, contact the server admins."}
+
+        self.ready_players[match_id].add(account_id)
 
         result = {"status": "success", "message": "You have been marked as ready."}
 
         # if all players of a match are ready, we can start the match.
-        if self.ready_players[match_key] == set(match["players"]):
-            self.active_match = {
-                "match_key": match["match_key"],
-                "players": match["players"],
-                "uuids": match["uuids"],
-                "teams": [match["team1"], match["team2"]],
-                "group_key": match["group_key"],
-                "round_key": match["round_key"],
-            }
+        if self.ready_players[match_id] == set(match.players):
+            self.active_match = match
             # clean-up them from the pending matches and ready players.
-            del self.pending_matches[match_key]
-            del self.ready_players[match_key]
+            del self.pending_matches[match_id]
+            del self.ready_players[match_id]
             with bascenev1.ContextRef.empty():
                 bascenev1.apptimer(5.0, self.start_tournament_session)
             result["start"] = True
@@ -140,75 +116,74 @@ class Manager:
                 "message": "There is no active match."
             }
 
-        if account_id not in self.active_match["players"]:
+        if account_id not in self.active_match.players:
             return {
                 "status": "error",
                 "message": "You are not a member of the active match."
             }
 
-        match_key = self.active_match["match_key"]
-        if account_id in self.pause_players.get(match_key, set()):
+        match_id = self.active_match.match.match_id
+        if account_id in self.pause_players.get(match_id, set()):
             return {
                 "status": "error",
                 "message": "You are already marked for match pause."
             }
 
         result = {"status": "success", "message": "You have been marked for match pause."}
-        self.pause_players[match_key].add(account_id)
-        if self.pause_players[match_key] == set(self.active_match["players"]):
+        self.pause_players[match_id].add(account_id)
+        if self.pause_players[match_id] == set(self.active_match.players):
+            self.save_score()
             # if all players are marked for pause, we can pause the match.
-            # TODO: pause the match.
-            pass
+            # for now, we will just restart the server.
+            self.end_tournament_session()
+            result["pause"] = True
         return result
 
+    def save_score(self) -> None:
+        """saves the score of active match in database."""
+        if not self.active_match:
+            return
+
+        if self.active_match.match.group_id:
+            # its a group stage match.
+            gs = self.brackets.read_gs()
+            gs.groups[self.active_match.match.group_id].rounds[self.active_match.match.round_id].matches[self.active_match.match.match_id] = self.active_match.match
+            self.brackets.commit_gs(gs)
+        else:
+            # its a main stage match.
+            ms = self.brackets.read_ms(self.brackets.get_active_round_path())
+            ms.matches[self.active_match.match.match_id] = self.active_match.match
+            self.brackets.commit_ms(ms)
 
     def handle_player_leave(self, account_id: str) -> None:
         """handles the player leaving."""
-        match_key = self.players.get(account_id, [None, None])[0]
-        if not match_key:
+        match_id = self.players.get(account_id, [None, None])[0]
+        if not match_id:
             return
 
         if self.active_match:
             return
 
-        if account_id in self.ready_players.get(match_key, set()):
-            self.ready_players[match_key].remove(account_id)
+        if account_id in self.ready_players.get(match_id, set()):
+            self.ready_players[match_id].remove(account_id)
 
-    def conclude_active_match(
-        self, winner: bascenev1.SessionTeam, loser: bascenev1.SessionTeam
-    ) -> None:
+    def conclude_active_match(self) -> None:
         """concludes the active match."""
         if not self.active_match:
             return
 
-        if self.active_match["teams"].index(winner.name) == 0:
-            score1, score2 = winner.score, loser.score
-            series1, series2 = winner.series, loser.series
-        else:
-            score1, score2 = loser.score, winner.score
-            series1, series2 = loser.series, winner.series
-        match_key = self.active_match["match_key"]
-        group_key = self.active_match["group_key"]
-        round_key = self.active_match["round_key"]
+        self.save_score()
 
-        if group_key:
+        if self.active_match.match.group_id:
             self.brackets.update_gs_match(
-                group_key=group_key,
-                round_key=round_key,
-                match_key=match_key,
-                score1=score1,
-                score2=score2,
-                series1=series1,
-                series2=series2,
+                match = self.active_match.match,
             )
         else:
             self.brackets.update_ms_match(
-                match_key=match_key, score1=score1, score2=score2, series1=series1, series2=series2
+                match = self.active_match.match,
             )
 
-        self.brackets.send_results(
-            winner.name, self.active_match["teams"][0], self.active_match["teams"][1], score1, score2, series1, series2, f"{group_key}-{round_key}-{match_key}"
-        )
+        self.brackets.send_results(self.active_match.match, self.active_match.key)
         self.brackets.send_players_dashboard()
         self.end_tournament_session()
 
@@ -217,7 +192,7 @@ class Manager:
         # set os env to stop server from restarting in between a match and collect player stats.
         os.environ["TOURNAMENT_MATCH"] = self.season_id
         # send the announcement to the discord server
-        self.brackets.announce_match_start(self.active_match["teams"][0], self.active_match["teams"][1])
+        self.brackets.announce_match_start(self.active_match.match.teams[0].name, self.active_match.match.teams[1].name)
         from .activity import TournamentTransitionActivity
 
         session = bascenev1.get_foreground_host_session()

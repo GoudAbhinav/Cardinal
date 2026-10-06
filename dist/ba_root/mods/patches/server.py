@@ -5,9 +5,9 @@ from baclassic._servermode import ServerController
 from . import patch_method
 
 
-@patch_method(ServerController, "handle_transition")
-def handle_transition(self) -> bool:
+@patch_method(ServerController, "_execute_shutdown")
+def _execute_shutdown(self) -> None:
     """patched method to stop the server from restarting in between a match."""
     if os.getenv("TOURNAMENT_MATCH") is not None:
-        return False
-    return handle_transition.original(self)
+        return
+    return _execute_shutdown.original(self)

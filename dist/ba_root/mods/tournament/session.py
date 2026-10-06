@@ -19,9 +19,9 @@ class TournamentSession(DualTeamSession):
     def on_team_join(self, team: bascenev1.Team) -> None:
         super().on_team_join(team)
         # change the team name to their actual team name.
-        team.name = manager.active_match["teams"][team.id]
-        team.score = 0
-        team.series = 0
+        team.name = manager.active_match.match.teams[team.id].name
+        # if the match was resumed, update the score to what they had.
+        team.customdata["score"] = manager.active_match.match.last_scores[team.id]
 
     @override
     def on_player_request(self, player: bascenev1.SessionPlayer):
@@ -30,19 +30,10 @@ class TournamentSession(DualTeamSession):
         )
         if (
             manager.active_match
-            and not client.account_id in manager.active_match["players"]
+            and not client.account_id in manager.active_match.players
         ):
             # a match is active, if the player is not any of the teams of the match, dont let them join.
             client.error("A match is active. You cannot join.")
-            return False
-
-        if not client.public_uuid in manager.active_match["uuids"]:
-            utils.error(
-                message=f"{client.name}'s device uuid is changed, please contact the server admins."
-            )
-            client.error(
-                "Your device uuid could not be verified, please contact the server admins."
-            )
             return False
 
         return super().on_player_request(player)
@@ -60,12 +51,12 @@ class TournamentSession(DualTeamSession):
             },
         )
         team_y_positions = [275, 220]
-        for team in self.sessionteams:
+        for team in manager.active_match.match.teams:
             team.text = bascenev1.newnode(
                 "text",
                 attrs={
-                    "text": f"{team.name[:15]}: {team.score}/{team.series}",
-                    "position": (-600, team_y_positions[team.id]),
+                    "text": f"{team.name}: {manager.active_match.match.last_scores[team.idx]}/{team.series}",
+                    "position": (-600, team_y_positions[team.idx]),
                     "color": (1, 1, 0),
                     "scale": 0.8,
                     "h_align": "center",
@@ -111,11 +102,13 @@ class TournamentSession(DualTeamSession):
             loser = winnergroups[1].teams[0]
             winner.customdata["score"] += 1
 
-            winner.score += 1
+            manager.active_match.match.teams[winner.id].score += 1
+            manager.active_match.match.last_scores[winner.id] += 1
 
             # If a team has won, show final victory screen.
             if winner.customdata["score"] >= (self._series_length - 1) / 2 + 1:
-                winner.series += 1
+                manager.active_match.match.teams[winner.id].series += 1
+                manager.active_match.match.last_scores = [0, 0]
                 self.setactivity(
                     bascenev1.newactivity(
                         TeamSeriesVictoryScoreScreenActivity,
@@ -123,14 +116,17 @@ class TournamentSession(DualTeamSession):
                     )
                 )
 
-                if winner.series >= tournament.series_length:
+                if manager.active_match.match.teams[winner.id].series >= tournament.series_length:
+                    manager.active_match.match.winner_idx = winner.id
+                    manager.active_match.match.loser_idx = loser.id
                     utils.success(
-                        message=f"Match concluded. Winner: {winner.name}, Loser: {loser.name}\nResults are announced in discord."
+                        message=f"Match concluded. Winner: {winner.name}, Loser: {loser.name}\nResults will be announced in discord."
                     )
-                    manager.conclude_active_match(winner, loser)
+                    manager.conclude_active_match()
             else:
                 self.setactivity(
                     bascenev1.newactivity(
                         TeamVictoryScoreScreenActivity, {"winner": winner}
                     )
                 )
+            manager.save_score()
