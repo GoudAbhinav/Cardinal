@@ -2,11 +2,29 @@
 
 from __future__ import annotations
 
-from discord import ButtonStyle, Interaction, ui
+from discord import ButtonStyle, Guild, Interaction, Role, ui
 from discord.utils import get
 
 from tournament import tournament
 from tournament.registration import Registration
+
+TEAM_NAME_MAX_LENGTH = 40
+
+
+def participant_role(guild: Guild, season_id: str) -> Role | None:
+    """returns the participant role of the season."""
+    season = tournament.get_season(season_id)
+    if season and season.participant_role_id:
+        role = guild.get_role(season.participant_role_id)
+        if role:
+            return role
+    return get(guild.roles, name="Participant")
+
+
+def valid_team_name(name: str) -> bool:
+    """the team name is used inside a button's custom id, so it must stay simple."""
+    return bool(name.strip()) and ";" not in name
+
 
 # solo registration modal.
 
@@ -14,9 +32,11 @@ class SoloRegistrationModal(ui.Modal, title="Tournament Solo Registration."):
     """asks for team name."""
 
     team_name = ui.TextInput(
-            label="Team Name", required=True, placeholder="Enter an unique team name."
-        )
-    
+        label="Team Name",
+        required=True,
+        placeholder="Enter an unique team name.",
+        max_length=TEAM_NAME_MAX_LENGTH,
+    )
 
     def __init__(self, season_id: str):
         super().__init__()
@@ -31,20 +51,33 @@ class SoloRegistrationModal(ui.Modal, title="Tournament Solo Registration."):
             )
             return
 
+        if not valid_team_name(self.team_name.value):
+            await interaction.response.send_message(
+                "The team name cannot be empty or contain `;`.", ephemeral=True
+            )
+            return
+
         code = registration.generate_code()
         success = registration.register(
             team_name=self.team_name.value,
             captain_discord_id=str(interaction.user.id),
             captain_code=code,
         )
+        if success is None:
+            await interaction.response.send_message(
+                "The name you have chosen is already taken. Please choose a different name.",
+                ephemeral=True,
+            )
+            return
         if not success:
             await interaction.response.send_message(
                 "You are already registered in this season.", ephemeral=True
             )
             return
 
-        role = get(interaction.guild.roles, name="Participant")
-        await interaction.user.add_roles(role)
+        role = participant_role(interaction.guild, self.season_id)
+        if role:
+            await interaction.user.add_roles(role)
         await interaction.response.send_message(
             f"Registered as {interaction.user.display_name}! Join the game server and run `/verify {code}` to verify yourself. Your code is given below.",
             ephemeral=True,
@@ -59,7 +92,10 @@ class CaptainRegistrationModal(ui.Modal, title="Tournament Team Registration."):
     """asks for captain's account id and team's name"""
 
     team_name = ui.TextInput(
-        label="Team Name", required=True, placeholder="Enter an unique team name."
+        label="Team Name",
+        required=True,
+        placeholder="Enter an unique team name.",
+        max_length=TEAM_NAME_MAX_LENGTH,
     )
 
     def __init__(self, season_id: str, size: int):
@@ -83,7 +119,19 @@ class CaptainRegistrationModal(ui.Modal, title="Tournament Team Registration."):
             )
             return
 
+        if not valid_team_name(self.team_name.value):
+            await interaction.response.send_message(
+                "The team name cannot be empty or contain `;`.", ephemeral=True
+            )
+            return
+
         invited_members = self.select.component.values
+        if any(member.bot or member.id == interaction.user.id for member in invited_members):
+            await interaction.response.send_message(
+                "You cannot invite bots or yourself, select your actual teammates.",
+                ephemeral=True,
+            )
+            return
         code = registration.generate_code()
 
         team_id = registration.register(
@@ -107,8 +155,9 @@ class CaptainRegistrationModal(ui.Modal, title="Tournament Team Registration."):
             )
             return
 
-        role = get(interaction.guild.roles, name="Participant")
-        await interaction.user.add_roles(role)
+        role = participant_role(interaction.guild, self.season_id)
+        if role:
+            await interaction.user.add_roles(role)
 
         view = TeamInvitationView(team_id=team_id)
 
@@ -169,9 +218,10 @@ class TeamInvitationView(ui.LayoutView):
             )
             return
 
-        if registration.is_registered(str(interaction.user.id)):
+        # invited members are in the players map from the start, so check their acceptance instead.
+        if registration.has_accepted(str(interaction.user.id)):
             await interaction.response.send_message(
-                "You are already registered.", ephemeral=True
+                "You have already accepted the invitation.", ephemeral=True
             )
             return
 
@@ -184,8 +234,9 @@ class TeamInvitationView(ui.LayoutView):
             )
             return
 
-        role = get(interaction.guild.roles, name="Participant")
-        await interaction.user.add_roles(role)
+        role = participant_role(interaction.guild, season_id)
+        if role:
+            await interaction.user.add_roles(role)
         await interaction.response.send_message(
             f"You have joined the team! Join the game server and run `/verify {code}` to verify yourself. Your code is given below.",
             ephemeral=True,
@@ -212,23 +263,23 @@ class TeamInvitationView(ui.LayoutView):
             )
             return
 
-        role = get(interaction.guild.roles, name="Participant")
+        role = participant_role(interaction.guild, season_id)
 
         # strip all the members of role.
         for member in team.members:
             discord_id = member.discord_id
             user = interaction.guild.get_member(int(discord_id))
-            if user and role in user.roles:
+            if role and user and role in user.roles:
                 await user.remove_roles(role)
 
         # delete the team.
         captain = registration.delete(team_id=team_id)
 
-        # disable the buttons inside the layout container
-        self.accept_button.disabled = True
-        self.decline_button.disabled = True
-
-        await interaction.response.edit_message(
-            f"**Invitation Declined**, {interaction.user.mention} declined the invitation for team {team_id}. CAPTAIN: <@{captain}>",
-            view=self,
+        # a layout view cannot have a message content, replace the buttons with a text instead.
+        self.clear_items()
+        self.add_item(
+            ui.TextDisplay(
+                f"**Invitation Declined**, {interaction.user.mention} declined the invitation for team {team_id}. CAPTAIN: <@{captain}>"
+            )
         )
+        await interaction.response.edit_message(view=self)

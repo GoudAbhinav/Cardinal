@@ -43,10 +43,27 @@ class Config(Storage):
 
     def bootstrap(self) -> None:
         """creates essential files."""
+        template = self.read(self.template_file)
         if not self.path.exists():
             # mhm.. we take it from template file.
-            config = self.read(self.template_file)
+            self.commit(template)
+            return
+
+        # add the settings that were introduced after the file was created.
+        config = self.read()
+        if self._merge_missing(config, template):
             self.commit(config)
+
+    def _merge_missing(self, config: dict, template: dict) -> bool:
+        """adds the keys of template missing in config (recursively), returns whether it changed."""
+        changed = False
+        for key, value in template.items():
+            if key not in config:
+                config[key] = value
+                changed = True
+            elif isinstance(value, dict) and isinstance(config[key], dict):
+                changed |= Config._merge_missing(config[key], value)
+        return changed
 
     def toggle(self, utility: Utility) -> bool:
         """toggles the utility."""

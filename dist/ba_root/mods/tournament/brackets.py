@@ -53,7 +53,7 @@ class Brackets(Storage):
             winning_teams_per_group = winning_teams_per_group // 2
 
         for index in range(groups_count):
-            group_id = f"group_{index + 1}"
+            group_id = f"group-{index + 1}"
             groups[group_id] = GroupSchema(
                 rounds = self.generate_round_robin(
                     teams[index * teams_per_group : (index + 1) * teams_per_group],
@@ -98,16 +98,16 @@ class Brackets(Storage):
                 first = teams[i]  # first in sense of next front.
                 last = teams[count - 1 - i]  # last in sense of previous back.
 
-                match = self.create_match_format(team1=first, team2=last, group_id=group_id, round_id=f"round {round}")
+                match = self.create_match_format(team1=first, team2=last, match_id = f"match-{i + 1}",group_id=group_id, round_id=f"round {round}")
 
                 # if one of them is None, we give them BYEs.
                 if first is None or last is None:
                     match.status = Status.COMPLETED
-                    match.winner = 0 if last is None else 1
+                    match.winner_idx = 0 if last is None else 1
 
-                round_matches[f"m{i + 1}"] = match
+                round_matches[f"match-{i + 1}"] = match
 
-            rounds[f"round {round}"] = RoundSchema(matches = round_matches, status = Status.IN_PROGRESS if round == 1 else Status.PENDING)
+            rounds[f"round-{round}"] = RoundSchema(matches = round_matches, status = Status.IN_PROGRESS if round == 1 else Status.PENDING)
 
             # shuffle it so the teams dont get matched up with the same team twice.
             teams = [teams[0]] + [teams[-1]] + teams[1:-1]
@@ -296,6 +296,16 @@ class Brackets(Storage):
                 front_group = groups_keys[i]
                 back_group = groups_keys[(i + offset) % groups_count]
 
+                if winning_teams_per_group == 1:
+                    if i < offset:
+                        pairings.append(
+                            (
+                                teams[front_group].standings[0],
+                                teams[back_group].standings[0],
+                            )
+                        )
+                    continue
+
                 for index in range(winning_teams_per_group // 2):
                     team1 = teams[front_group].standings[index]
                     team2 = teams[back_group].standings[
@@ -306,7 +316,7 @@ class Brackets(Storage):
         # we have the pairings now.
         matches = {}
         for index, (t1, t2) in enumerate(pairings, start=1):
-            matches[f"m{index}"] = self.create_match_format(team1=t1, team2=t2)
+            matches[f"match-{index}"] = self.create_match_format(team1=t1, team2=t2, match_id = f"match-{index}")
 
         return RoundSchema(matches = matches, status = Status.IN_PROGRESS)
 
@@ -358,18 +368,18 @@ class Brackets(Storage):
             losers = [team.name for match in matches_data.values() for team in match.teams if team.idx == match.loser_idx]
 
             next_matches["FINALS"] = self.create_match_format(
-                team1=winners[0], team2=winners[1]
+                team1=winners[0], team2=winners[1], match_id = "FINALS"
             )
             next_matches["THIRD_PLACE"] = self.create_match_format(
-                team1=losers[0], team2=losers[1]
+                team1=losers[0], team2=losers[1], match_id = "THIRD_PLACE"
             )
 
         else:
             # standard rounds.
             match_count = 1
             for i in range(0, len(winners), 2):
-                next_matches[f"m{match_count}"] = self.create_match_format(
-                    team1=winners[i], team2=winners[i + 1]
+                next_matches[f"match-{match_count}"] = self.create_match_format(
+                    team1=winners[i], team2=winners[i + 1], match_id = f"match-{match_count}"
                 )
                 match_count += 1
 
@@ -544,7 +554,7 @@ class Brackets(Storage):
             # and now we can send the results to discord.
             self.send_results(match, match_id)
             self.send_players_dashboard()
-            return f"Given {team} win."
+            return f"Given {team.name} win."
         return "Match is already completed"
 
     def get_round_name(self, count: int) -> str:
@@ -566,11 +576,13 @@ class Brackets(Storage):
         self,
         team1: str,
         team2: str,
+        match_id: str,
         group_id: str | None = None,
         round_id: str | None = None,
     ) -> MatchSchema:
         """match format."""
         return MatchSchema(
+            match_id = match_id,
             teams = [
                 MatchTeamSchema(idx=0, name=team1),
                 MatchTeamSchema(idx=1, name=team2)

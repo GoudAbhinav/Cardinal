@@ -37,6 +37,7 @@ class Auth(Storage):
     def authenticate(self, account_id: str) -> bool:
         """authenticate the account."""
         auth = self.read()
+        auth.setdefault("authentic", [])
         if account_id not in auth["authentic"]:
             auth["authentic"].append(account_id)
             self.commit(auth)
@@ -46,7 +47,7 @@ class Auth(Storage):
         """returns whether the account's authentic,
         this is handled by OTPs."""
         auth = self.read()
-        return account_id in auth["authentic"]
+        return account_id in auth.get("authentic", [])
 
 
 auth = Auth()

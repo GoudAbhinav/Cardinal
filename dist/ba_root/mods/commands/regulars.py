@@ -15,13 +15,15 @@ def list(client: Client):
     heads = "{0:^16}{1:^15}{2:^15}\n"
     sep = "--------------------------------------------------------------\n"
     string = heads.format("Name", "Client ID", "Index ID") + sep
+    listed = set()
     if session := bascenev1.get_foreground_host_session():
         for index, player in enumerate(session.sessionplayers):
+            listed.add(player.inputdevice.client_id)
             string += heads.format(
                 player.getname(True, True), player.inputdevice.client_id, index
             )
     for i in bascenev1.get_game_roster()[1:]:
-        if str(i["client_id"]) not in string:
+        if str(i["client_id"]) not in listed:
             string += heads.format(i["display_string"], i["client_id"], "<in lobby>")
     client.success(string)
 

@@ -34,6 +34,14 @@ class Registration(Storage):
         players = db.players
         return id in players
 
+    def has_accepted(self, discord_id: str) -> bool:
+        """returns whether the invited member has already accepted the invitation."""
+        db = self.read()
+        team = db.teams.get(db.players.get(discord_id, ""))
+        if not team:
+            return False
+        return any(m.discord_id == discord_id and m.code for m in team.members)
+
     def register(
         self,
         team_name: str,
@@ -42,6 +50,11 @@ class Registration(Storage):
         invited_members: list = [],
     ):
         """registers a team/solo in database."""
+        if captain_discord_id in invited_members or len(set(invited_members)) != len(
+            invited_members
+        ):
+            # a person cannot be in a team twice.
+            return False
         size = len(invited_members) + 1
         if self.is_registered(captain_discord_id) or any(
             self.is_registered(discord_id) for discord_id in invited_members

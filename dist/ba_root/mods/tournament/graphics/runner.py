@@ -1,5 +1,5 @@
 """runs and generates the graphical images and sends to discord webhooks"""
-
+import threading
 import subprocess
 import shutil
 import os
@@ -15,6 +15,8 @@ def run(data: dict) -> None:
     # run the generation script using uv
     script_path = str(GRAPHICS_DIR / "generator.py")
     env = os.environ.copy()
-    env["PYTHONPATH"] = MODS_DIR
+    env["PYTHONPATH"] = str(MODS_DIR)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
-    subprocess.Popen([uv, "run", script_path, json.dumps(data)], env=env)
+    process = subprocess.Popen([uv, "run", script_path, json.dumps(data)], env=env)
+    # reap the process when it ends so it doesn't stay as a zombie.
+    threading.Thread(target=process.wait, daemon=True).start()

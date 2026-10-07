@@ -16,6 +16,9 @@ class Manager:
         self.ready_players = {}
         self.pause_players = {}
 
+        self.season_id: str = "0"
+        self.brackets: Brackets | None = None
+
         self.active_match: PendingMatchSchema | None = None
 
     def initialize(self, season_id: str):
@@ -122,8 +125,9 @@ class Manager:
                 "message": "You are not a member of the active match."
             }
 
-        match_id = self.active_match.match.match_id
-        if account_id in self.pause_players.get(match_id, set()):
+        match_id = self.active_match.key
+        self.pause_players.setdefault(match_id, set())
+        if account_id in self.pause_players[match_id]:
             return {
                 "status": "error",
                 "message": "You are already marked for match pause."
@@ -151,9 +155,10 @@ class Manager:
             self.brackets.commit_gs(gs)
         else:
             # its a main stage match.
-            ms = self.brackets.read_ms(self.brackets.get_active_round_path())
+            active_round_path = self.brackets.get_active_round_path()
+            ms = self.brackets.read_ms(active_round_path)
             ms.matches[self.active_match.match.match_id] = self.active_match.match
-            self.brackets.commit_ms(ms)
+            self.brackets.commit_ms(ms, active_round_path)
 
     def handle_player_leave(self, account_id: str) -> None:
         """handles the player leaving."""
@@ -203,7 +208,11 @@ class Manager:
         """ends the tournament session."""
         bascenev1.broadcastmessage("Server will restart in 10 seconds.")
         with bascenev1.ContextRef.empty():
-            bascenev1.apptimer(10.0, bascenev1.app.classic.server._execute_shutdown)
+            bascenev1.apptimer(10.0, self._shutdown)
+
+    def _shutdown(self) -> None:
+        os.environ.pop("TOURNAMENT_MATCH", None)
+        bascenev1.app.classic.server._execute_shutdown()
 
 
 manager = Manager()

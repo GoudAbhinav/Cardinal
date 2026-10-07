@@ -1,4 +1,5 @@
 import json
+import functools
 import os
 import shutil
 import socket
@@ -34,12 +35,16 @@ class SocketTunnel(threading.Thread):
 
                 data = json.loads(raw_bytes.decode("utf-8"))
                 # push safely into the game thread.
+                # bind the values now, the loop variables change on the next packet.
                 babase.pushcall(
-                    lambda: self._handle_data(data, self.sock, addr),
+                    functools.partial(self._handle_data, data, self.sock, addr),
                     from_other_thread=True,
                 )
             except OSError:
                 break
+            except (ValueError, UnicodeDecodeError):
+                # malformed payload, ignore it.
+                continue
 
     def _handle_data(self, data: dict, sock: socket.socket, addr: tuple) -> None:
         """handles and processes the received data."""

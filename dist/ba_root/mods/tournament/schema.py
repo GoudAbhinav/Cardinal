@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import asdict, field
 from pydantic.dataclasses import dataclass
 from pydantic import TypeAdapter
-from server.enums import SeriesType, TournamentStage, TournamentType, Status
+from server.enums import SeriesType, TournamentStage, TournamentType, Status, TeamStatus
 
 class BaseSchema:
     """base schema for all the schemas."""
@@ -55,7 +55,7 @@ class MatchSchema(BaseSchema):
     loser_idx: int | None = None
     group_id: str | None = None
     round_id: str | None = None
-    last_scores: list[int, int] = field(default_factory=lambda : [0, 0])
+    last_scores: list[int] = field(default_factory=lambda : [0, 0])
 
 @dataclass
 class PendingMatchSchema(BaseSchema):
@@ -95,17 +95,17 @@ class BracketsMetaSchema(BaseSchema):
 @dataclass
 class MemberSchema(BaseSchema):
     """schema for a member."""
+    discord_id: str
     code: str = ""
     account_id: str = ""
     device_uuid: str = ""
-    discord_id: str
 
 @dataclass
 class TeamSchema(BaseSchema):
     """schema for a team."""
     id: str
     captain: str
-    status: Status = Status.IN_INVITATION
+    status: TeamStatus = TeamStatus.IN_INVITATION
     members: list[MemberSchema] = field(default_factory=list)
 
 @dataclass

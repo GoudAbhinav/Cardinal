@@ -28,7 +28,7 @@ def ready(client: Client):
     if response["status"] == "error":
         client.error(response["message"])
 
-@on_command(name="/pause")
+@on_command(name="/mpause")
 def pause(client: Client):
     """pauses the match if everyone agrees."""
     season_id = tournament.active_season

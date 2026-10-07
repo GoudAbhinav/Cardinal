@@ -44,6 +44,7 @@ class Webhook(Storage):
             data = None
         
         response = self.session.post(url=f"{url}?wait=true", data=data, files=files)
+        response.raise_for_status()
         db[key] = {
             "message_id": response.json()["id"],
             "url": url,

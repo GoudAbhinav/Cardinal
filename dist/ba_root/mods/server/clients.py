@@ -64,7 +64,7 @@ class Client:
             self.success("You have been verified successfully.")
         return response
 
-    def get_auth_code(self) -> None:
+    def get_auth_code(self) -> str:
         """generates an auth code for this client if doesn't exists."""
         if self.account_id not in Client.__auth_codes:
             Client.__auth_codes[self.account_id] = f"{secrets.randbelow(1_000_000):06d}"
@@ -74,6 +74,7 @@ class Client:
         """verifies the entered code to auth code."""
         if Client.__auth_codes[self.account_id] == code:
             return self.authenticate()
+        return False
 
     @property
     def ping(self) -> int:
@@ -232,5 +233,5 @@ def fetch_player(player_index: int | str) -> Player | None:
     # manual converting to avoid str cases.
     player_index = int(player_index)
     if session := bascenev1.get_foreground_host_session():
-        sessionplayer = session.sessionplayers[player_index]
-        return Player(sessionplayer)
+        if 0 <= player_index < len(session.sessionplayers):
+            return Player(session.sessionplayers[player_index])

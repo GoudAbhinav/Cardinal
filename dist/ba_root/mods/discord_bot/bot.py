@@ -15,7 +15,7 @@ from discord_bot.ui import (
 from traceback import format_exc
 from roles import roles
 from server import config
-from server.enums import Authority, Role, SeriesType, TournamentType, TournamentStage
+from server.enums import Authority, Role, SeriesType, TournamentType, TournamentStage, TeamStatus
 from tournament import tournament
 from tournament.schema import SeasonSchema
 
@@ -31,10 +31,21 @@ class DiscordBot(commands.Bot):
         )
 
     async def setup_hook(self) -> None:
-        self.add_view(TeamInvitationView("9999"))
+        self._restore_invitations()
         self.tree.on_error = self.on_app_cmd_error
         await self.add_cog(GeneralCommands(self))
         await self.add_cog(TournamentCommands(self))
+
+    def _restore_invitations(self) -> None:
+        """re-registers the invitation buttons of the pending teams, so they work after a restart."""
+        season_id = tournament.active_season
+        if not int(season_id):
+            return
+        from tournament.registration import Registration
+
+        for team_id, team in Registration(season_id=season_id).read().teams.items():
+            if team.status == TeamStatus.IN_INVITATION:
+                self.add_view(TeamInvitationView(team_id))
 
     async def on_app_cmd_error(
         self, interaction: Interaction, error: app_commands.AppCommandError
@@ -106,6 +117,10 @@ class GeneralCommands(commands.Cog):
         """lists all the players from game"""
         await interaction.response.defer(ephemeral=True)
         response = await self.client.send_action(action="list", response=True)
+
+        if response is None:
+            await interaction.followup.send("The game server did not respond.")
+            return
 
         if not response["players"]:
             await interaction.followup.send("There are no players in the server")
@@ -187,7 +202,7 @@ class TournamentCommands(
         role = discord.utils.get(interaction.guild.roles, name="Participant")
         if role:
             # if yes, delete it.
-            role.delete()
+            await role.delete()
         # make the role.
         role = await interaction.guild.create_role(
             name="Participant", mentionable=True,
@@ -351,7 +366,20 @@ class TournamentCommands(
 
         # we need to generate the brackets.
         registration = Registration(season_id=brackets.season_id).read()
-        teams = list(registration.teams.keys())
+        # get only the verified teams.
+        teams = [
+            team_id
+            for team_id, team in registration.teams.items()
+            if team.status == TeamStatus.VERIFIED
+        ]
+        skipped = [team_id for team_id in registration.teams if team_id not in teams]
+        if skipped:
+            # there are skipped teams, we cannot generate the brackets yet.
+            await interaction.followup.send(
+                f"The following teams have not been verified yet: {', '.join(skipped)}",
+                ephemeral=True,
+            )
+            return
         try:
             is_groupstage = brackets.generate_group_stage(teams=teams)
         except AssertionError:
@@ -372,7 +400,7 @@ class TournamentCommands(
                 role = discord.utils.get(guild.roles, name=group_name)
                 if role:
                     # if it does, delete it.
-                    role.delete()
+                    await role.delete()
                 # now we create the role.
                 role = await guild.create_role(
                     name=group_name, mentionable=True,
