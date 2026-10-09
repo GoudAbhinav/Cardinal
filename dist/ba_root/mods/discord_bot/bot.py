@@ -7,6 +7,7 @@ from discord import Activity, ActivityType, Intents, Interaction, app_commands
 from discord.ext import commands
 import asyncio
 from discord_bot.client import GameClient
+from discord_bot.held_posts import HeldPosts
 from discord_bot.ui import (
     CaptainRegistrationModal,
     TeamInvitationView,
@@ -16,7 +17,7 @@ from traceback import format_exc
 from roles import roles
 from server import config
 from server.enums import Authority, Role, SeriesType, TournamentMode, TournamentType, TournamentStage, TeamStatus
-from tournament import tournament
+from tournament import posts, tournament
 from tournament.schema import SeasonSchema
 
 
@@ -35,6 +36,7 @@ class DiscordBot(commands.Bot):
         self.tree.on_error = self.on_app_cmd_error
         await self.add_cog(GeneralCommands(self))
         await self.add_cog(TournamentCommands(self))
+        await self.add_cog(HeldPosts(self))
 
     def _restore_invitations(self) -> None:
         """re-registers the invitation buttons of the pending teams, so they work after a restart."""
@@ -438,7 +440,17 @@ class TournamentCommands(
         for index, team in enumerate(teams, start=1):
             pings += f"{index}. `{team}`: <@{registration.teams[team].captain}>\n"
 
-        await interaction.followup.send(pings)
+        if posts.hold_enabled():
+            # held for the owners to review, then sent to the announcements channel.
+            await asyncio.to_thread(
+                posts.announce_lines,
+                tournament.active_season,
+                pings.rstrip("\n").split("\n"),
+                "Team captains list",
+                "captains",
+            )
+        else:
+            await interaction.followup.send(pings)
 
         # update the tournament season stage
         season = tournament.get_season(tournament.active_season)

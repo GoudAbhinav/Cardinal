@@ -54,6 +54,15 @@ tmux
 - you have to create webhook for each of the channels and put them in the mods_config.json under the discord's webhooks section.
 - in the dist/ba_root/mods/tournament/graphics/generator.py, you have to replace the title and logo png with your own logo and title png urls (make sure they are raw urls)
 
+## Staff Review (held posts):
+- the brackets (group stage, main stage, double elimination) and the announcements (team captains list) are not posted at once.
+- they are shown in your staff channel right away, tagging only the owners, and go public after `hold_hours` (3 by default).
+- owners (the leaders role, and discord.owner_id) have two buttons on that message: "Send now" and "Cancel".
+- if a bracket changes while it is held (a match ended), the held post is updated instead of making a new one.
+- set `staff_channel_id` (the channel id) and `hold_hours` in mods_config.json under discord, it needs the bot to be running.
+- leave `staff_channel_id` as 0 (or `hold_hours` as 0) to post everything immediately like before.
+- results, dashboards, registrations and the match "is live now" announcement are not held.
+
 ## Tournament Features:
 - Automatically generates brackets for the tournament based on the number of teams/solo.
 - Automatically posts a result upon completion of the tournament match.

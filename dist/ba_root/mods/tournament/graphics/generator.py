@@ -7,6 +7,7 @@ import random
 import subprocess
 import io
 from tournament.graphics.runner import GRAPHICS_DIR
+from tournament import posts
 from tournament.webhook import Webhook
 from pathlib import Path
 
@@ -908,24 +909,22 @@ def _generate_group_schedule(group_name: str, group_data: dict, webhook: Webhook
     with io.BytesIO() as image_buffer:
         img.convert("RGB").save(image_buffer, "PNG", optimize=True)
         image_buffer.seek(0)
-        files = webhook.create(f"group-{group_name}.png", image_buffer)
-
-        # firstly check if there have been a bracket sent for this group.
-        data = webhook.get(f"group-{group_name}")
-        if data:
-            # there is a bracket already sent.
-            # we will edit it.
-            webhook.edit(f"group-{group_name}", files, content=f"<@&{group_data['role_id']}>, Your brackets are here.")
-            return
-        # there is no bracket sent yet, we will send a new one.
-        webhook.send("brackets", f"group-{group_name}", files, content=f"<@&{group_data['role_id']}>, Your brackets are here.")
+        # sent as a new message, or edited if this group's bracket was already sent (held for the
+        # owners to review first, when that is on).
+        posts.submit(
+            webhook,
+            "brackets",
+            f"group-{group_name}",
+            f"Group {group_name} brackets",
+            filename=f"group-{group_name}.png",
+            image=image_buffer.getvalue(),
+            content=f"<@&{group_data['role_id']}>, Your brackets are here.",
+        )
 
 
 def _generate_group_overview(groups: dict, webhook: Webhook) -> None:
-    # check if the overview image is sent for this season.
-    data = webhook.get("group-overview")
-    if data:
-        # there is an overview already sent.
+    # the overview is sent once per season, nothing to do if it was already sent (or is held).
+    if webhook.get("group-overview") or posts.find_pending(webhook.season_id, "group-overview"):
         return
     img = _group_background()
     add_watermark(img, LOGO_FILE, WIDTH, HEIGHT, alpha=0.4, y_pos=125)
@@ -1025,8 +1024,15 @@ def _generate_group_overview(groups: dict, webhook: Webhook) -> None:
     with io.BytesIO() as image_buffer:
         img.convert("RGB").save(image_buffer, "PNG", optimize=True)
         image_buffer.seek(0)
-        files = webhook.create("group-overview.png", image_buffer)
-        webhook.send("brackets", "group-overview", files)
+        posts.submit(
+            webhook,
+            "brackets",
+            "group-overview",
+            "Group stage overview",
+            filename="group-overview.png",
+            image=image_buffer.getvalue(),
+            once=True,
+        )
 
 
 def generate_group_stage(json_file: Path, webhook: Webhook) -> None:
@@ -1615,16 +1621,14 @@ def generate_mainstage_bracket(json_files: list, webhook: Webhook) -> None:
     with io.BytesIO() as image_buffer:
         img.convert("RGB").save(image_buffer, "PNG", optimize=True)
         image_buffer.seek(0)
-        files = webhook.create("mainstage-brackets.png", image_buffer)
-        # firstly check if there have been a bracket sent.
-        data = webhook.get(f"mainstage-brackets")
-        if data:
-            # there is a bracket already sent.
-            # we will edit it.
-            webhook.edit(f"mainstage-brackets", files)
-            return
-        # there is no bracket sent yet, we will send a new one.
-        webhook.send("brackets", f"mainstage-brackets", files)
+        posts.submit(
+            webhook,
+            "brackets",
+            "mainstage-brackets",
+            "Main stage bracket",
+            filename="mainstage-brackets.png",
+            image=image_buffer.getvalue(),
+        )
 
 
 # ---- double elimination ----
@@ -1853,12 +1857,14 @@ def generate_double_elimination(json_file: Path, webhook: Webhook) -> None:
     with io.BytesIO() as image_buffer:
         img.convert("RGB").save(image_buffer, "PNG", optimize=True)
         image_buffer.seek(0)
-        files = webhook.create("double-elimination-brackets.png", image_buffer)
-        data = webhook.get("double-elimination-brackets")
-        if data:
-            webhook.edit("double-elimination-brackets", files)
-            return
-        webhook.send("brackets", "double-elimination-brackets", files)
+        posts.submit(
+            webhook,
+            "brackets",
+            "double-elimination-brackets",
+            "Double elimination bracket",
+            filename="double-elimination-brackets.png",
+            image=image_buffer.getvalue(),
+        )
 
 
 def generate_player_registration(name: str, webhook: Webhook):
