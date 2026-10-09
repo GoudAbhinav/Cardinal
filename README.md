@@ -85,6 +85,7 @@ tmux
 - /tournament uuid \<user-mention> \<uuid> (changes the uuid of the registered player)
 - /tournament start (starts the tournament)
 - /tournament list (lists all the matches in the active round)
+- /tournament cancel (cancels the active tournament after a confirmation: registrations close, held posts are thrown away, a running match is stopped and the server restarts. the season stays in the files as CANCELLED)
 - /tournament win \<match-index> \<team-index> (gives win to the team, you can get index from /tournament list)
 - note: only the leader can use the commands aside from the register command.
 

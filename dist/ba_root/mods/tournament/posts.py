@@ -243,6 +243,21 @@ def cancel(post_id: str) -> bool:
         return True
 
 
+def cancel_season(season_id: str) -> list[dict]:
+    """throws away all the held posts of a season (its tournament was cancelled)."""
+    cancelled = []
+    with locked():
+        for record in load_pending():
+            if record["season_id"] != season_id:
+                continue
+            record["state"] = CANCELLED
+            record["resolved_at"] = time.time()
+            _write(record)
+            _remove_image(record)
+            cancelled.append(record)
+    return cancelled
+
+
 def _remove_image(record: dict) -> None:
     path = _image_path(record)
     if path:

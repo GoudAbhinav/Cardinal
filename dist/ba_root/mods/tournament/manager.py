@@ -24,8 +24,41 @@ class Manager:
     def initialize(self, season_id: str):
         """initializes the manager."""
         self.season_id = season_id
+        if not int(season_id):
+            # no season is going on, nothing to load (and no junk season folder).
+            self.brackets = None
+            self.pending_matches.clear()
+            self.players.clear()
+            return
         self.brackets = Brackets(season_id=season_id)
         self.load_pending_matches()
+
+    def sync(self) -> None:
+        """picks up a season that was created, cancelled or moved on after the server started."""
+        from tournament import tournament
+
+        if self.active_match:
+            return
+        if tournament.active_season != self.season_id:
+            self.initialize(tournament.active_season)
+        elif self.brackets:
+            # a win given from the bot, or a new round, can change what is pending.
+            self.load_pending_matches()
+
+    def cancel(self) -> None:
+        """forgets the tournament, the season was cancelled. a match that is being played is stopped
+        and the server restarts, like it does when a match ends."""
+        was_playing = self.active_match is not None
+        self.active_match = None
+        self.pending_matches.clear()
+        self.players.clear()
+        self.ready_players.clear()
+        self.pause_players.clear()
+        self.brackets = None
+        self.season_id = "0"
+        if was_playing:
+            bascenev1.broadcastmessage("The tournament has been cancelled.")
+            self.end_tournament_session()
 
     def load_pending_matches(self):
         """load all pending matches from the database."""
@@ -77,6 +110,7 @@ class Manager:
 
     def handle_player_ready(self, account_id: str, uuid: str) -> dict:
         """handles the player ready event."""
+        self.sync()
         match_id = self.players.get(account_id, [None, None])[0]
         if not match_id:
             return {

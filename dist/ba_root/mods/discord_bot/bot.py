@@ -9,6 +9,7 @@ import asyncio
 from discord_bot.client import GameClient
 from discord_bot.held_posts import HeldPosts
 from discord_bot.ui import (
+    ConfirmView,
     CaptainRegistrationModal,
     TeamInvitationView,
     SoloRegistrationModal,
@@ -223,6 +224,61 @@ class TournamentCommands(
         season = tournament.get_season(season_id=tournament.active_season)
         season.participant_role_id = role.id
         tournament.update_season(season_id=tournament.active_season, season=season)
+
+    @app_commands.command(name="cancel")
+    @require(Authority.LEADER)
+    async def cancel_tournament(self, interaction: Interaction) -> None:
+        """cancels the active tournament"""
+        season_id = tournament.active_season
+        if not int(season_id):
+            await interaction.response.send_message(
+                "There is no tournament season opened currently.", ephemeral=True
+            )
+            return
+
+        season = tournament.get_season(season_id)
+
+        async def confirmed(confirm_interaction: Interaction) -> None:
+            # somebody else may have cancelled it while we were asking.
+            if tournament.active_season != season_id:
+                await confirm_interaction.response.edit_message(
+                    content="That tournament was already cancelled.", view=None
+                )
+                return
+            await confirm_interaction.response.edit_message(
+                content="Cancelling the tournament...", view=None
+            )
+
+            tournament.cancel_season(season_id)
+            # the held posts of this season will not go public.
+            cancelled = await asyncio.to_thread(posts.cancel_season, season_id)
+            staff = self.bot.get_cog("HeldPosts")
+            if staff:
+                for record in cancelled:
+                    await staff.update_staff_message(
+                        record, "cancelled (the tournament was cancelled)"
+                    )
+            # the game forgets the tournament, and stops a match that is being played.
+            await GameClient().send_action("tournament_cancel")
+
+            await confirm_interaction.followup.send(
+                f"Tournament season {season_id} has been cancelled by {confirm_interaction.user.mention}."
+            )
+
+        view = ConfirmView(
+            interaction.user.id,
+            confirmed,
+            confirm_label="Yes, cancel it",
+            abort_text="The tournament goes on.",
+        )
+        await interaction.response.send_message(
+            f"Cancel the active tournament (season {season_id}: {season.type.lower()}, "
+            f"{season.mode.lower().replace('_', ' ')}, stage {season.stage.lower().replace('_', ' ')})?\n"
+            "Registrations close, the held posts are thrown away and a match that is being played is stopped. "
+            "This cannot be undone.",
+            view=view,
+            ephemeral=True,
+        )
 
     @app_commands.command(name="register")
     async def register(self, interaction: Interaction) -> None:
