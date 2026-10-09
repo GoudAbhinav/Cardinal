@@ -4,7 +4,14 @@ from __future__ import annotations
 from dataclasses import asdict, field
 from pydantic.dataclasses import dataclass
 from pydantic import TypeAdapter
-from server.enums import SeriesType, TournamentStage, TournamentType, Status, TeamStatus
+from server.enums import (
+    SeriesType,
+    Status,
+    TeamStatus,
+    TournamentMode,
+    TournamentStage,
+    TournamentType,
+)
 
 class BaseSchema:
     """base schema for all the schemas."""
@@ -25,6 +32,7 @@ class SeasonSchema(BaseSchema):
 
     series: SeriesType = SeriesType.BO3
     type: TournamentType = TournamentType.SOLO
+    mode: TournamentMode = TournamentMode.SINGLE
     stage: TournamentStage = TournamentStage.REGISTRATION
     created_at: str = ""
     participant_role_id: int = 0
@@ -44,6 +52,10 @@ class MatchTeamSchema(BaseSchema):
     name: str | None = None
     score: int = 0
     series: int = 0
+    # double elimination: a slot is filled by the result of another match, "W:<bracket>:<round>:<match>"
+    # for its winner and "L:..." for its loser. a bye slot never gets a team.
+    source: str | None = None
+    bye: bool = False
 
 @dataclass
 class MatchSchema(BaseSchema):
@@ -56,6 +68,9 @@ class MatchSchema(BaseSchema):
     group_id: str | None = None
     round_id: str | None = None
     last_scores: list[int] = field(default_factory=lambda : [0, 0])
+    # double elimination: "winners", "losers" or "grand-final", and whether a bye decided the match.
+    bracket: str | None = None
+    is_bye: bool = False
 
 @dataclass
 class PendingMatchSchema(BaseSchema):
@@ -70,6 +85,16 @@ class RoundSchema(BaseSchema):
     """schema for a round."""
     matches: dict[str, MatchSchema] = field(default_factory=dict)
     status: Status = Status.PENDING
+
+@dataclass
+class DoubleEliminationSchema(BaseSchema):
+    """schema for a double elimination bracket: winners, losers and the grand final."""
+    winners: dict[str, RoundSchema] = field(default_factory=dict)
+    losers: dict[str, RoundSchema] = field(default_factory=dict)
+    grand_final: RoundSchema = field(default_factory=RoundSchema)
+    status: Status = Status.PENDING
+    # {"rank": 1, "team": "name"}, filled in when the bracket is completed.
+    placements: list[dict] = field(default_factory=list)
 
 @dataclass
 class GroupSchema(BaseSchema):

@@ -15,7 +15,7 @@ from discord_bot.ui import (
 from traceback import format_exc
 from roles import roles
 from server import config
-from server.enums import Authority, Role, SeriesType, TournamentType, TournamentStage, TeamStatus
+from server.enums import Authority, Role, SeriesType, TournamentMode, TournamentType, TournamentStage, TeamStatus
 from tournament import tournament
 from tournament.schema import SeasonSchema
 
@@ -175,10 +175,18 @@ class TournamentCommands(
         super().__init__()
 
     @app_commands.command(name="create")
-    @app_commands.describe(type="Tournament Type", series="Series Type")
+    @app_commands.describe(
+        type="Tournament Type",
+        series="Series Type",
+        mode="Single or double elimination (default: single)",
+    )
     @require(authority=Authority.LEADER)
     async def create_season(
-        self, interaction: Interaction, type: TournamentType, series: SeriesType
+        self,
+        interaction: Interaction,
+        type: TournamentType,
+        series: SeriesType,
+        mode: TournamentMode = TournamentMode.SINGLE,
     ) -> None:
         """creates a tournament season"""
         if int(tournament.active_season):
@@ -192,11 +200,14 @@ class TournamentCommands(
         ist = timezone(timedelta(hours=5, minutes=30))
 
         schema = SeasonSchema(
-            series=series, type=type, created_at=datetime.now(ist).isoformat()
+            series=series,
+            type=type,
+            mode=mode,
+            created_at=datetime.now(ist).isoformat(),
         )
         tournament.create_season(schema=schema)
         await interaction.response.send_message(
-            f"The {type.lower()} season has been created with series: {series.lower()}"
+            f"The {type.lower()} season has been created with series: {series.lower()}, mode: {mode.lower().replace('_', ' ')}"
         )
         # check if the participant role exists
         role = discord.utils.get(interaction.guild.roles, name="Participant")
@@ -380,12 +391,22 @@ class TournamentCommands(
                 ephemeral=True,
             )
             return
+        mode = tournament.get_season(tournament.active_season).mode
+        is_groupstage = False
         try:
-            is_groupstage = brackets.generate_group_stage(teams=teams)
-        except AssertionError:
+            if mode == TournamentMode.DOUBLE:
+                # no group stage, everyone goes straight into the winners bracket.
+                brackets.generate_double_elimination(teams=teams)
+            else:
+                is_groupstage = brackets.generate_group_stage(teams=teams)
+        except (AssertionError, ValueError):
+            message = (
+                "Double elimination needs at least 4 teams."
+                if mode == TournamentMode.DOUBLE
+                else "The number of teams are either less than 4 or not divisible by 4."
+            )
             await interaction.followup.send(
-                "The number of teams are either less than 4 or not divisible by 4. The tournament cannot be started.",
-                ephemeral=True,
+                f"{message} The tournament cannot be started.", ephemeral=True
             )
             return
 

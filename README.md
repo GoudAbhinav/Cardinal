@@ -61,8 +61,16 @@ tmux
 - If groups are made, it will automatically generate a group stage, and the dashboard for each group will be posted.
 - note: make sure the number of teams is not less than 4 and is divisble by 4.
 
+## Tournament Modes:
+- single elimination (default): optional group stage, then a knockout main stage with a third-place match.
+- double elimination: no group stage, every team starts in the winners bracket and is knocked out by its second loss.
+- works with any number of teams (at least 4), a bracket that is not a power of 2 gives byes in the first round.
+- the winners champion meets the losers champion in the grand final, if the losers champion wins there is a second match (reset).
+- there is no third-place match, the team that loses the losers-bracket final is third (the final ranks are saved and drawn on the bracket image).
+- groups, rounds and matches are named "1", "2", ... in the files (the finals of single elimination are "1" and "2" for the final and third-place match).
+
 ## Tournament Commands:
-- /tournament create \<type> \<series> (creates a tournament season)
+- /tournament create \<type> \<series> [mode] (creates a tournament season, mode is single or double elimination and defaults to single)
 - /tournament registrations \<open/close> (opens/closes the registrations)
 - /tournament register (registers a player to the tournament)
 - /tournament uuid \<user-mention> \<uuid> (changes the uuid of the registered player)

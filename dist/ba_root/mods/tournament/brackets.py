@@ -3,12 +3,13 @@
 import re
 from pathlib import Path
 
-from server.enums import Status
+from server.enums import Status, TournamentStage
 from server.storage import Storage
+from tournament import double_elimination
 from tournament.storage import SEASONS_DIR
 from tournament.registration import Registration
 from tournament.graphics import runner
-from tournament.schema import BracketsMetaSchema, MatchSchema, MatchTeamSchema, GroupStageSchema, GroupSchema, RoundSchema, TeamSchema
+from tournament.schema import BracketsMetaSchema, DoubleEliminationSchema, MatchSchema, MatchTeamSchema, GroupStageSchema, GroupSchema, RoundSchema, TeamSchema
 
 class Brackets(Storage):
     """generates brackets and handles the rounds."""
@@ -17,6 +18,7 @@ class Brackets(Storage):
         super().__init__("brackets.json", SEASONS_DIR / season_id)
         self.season_id = season_id
         self.group_stage_path = self.directory / "rounds" / "group-stage.json"
+        self.double_elimination_path = self.directory / "rounds" / "double-elimination.json"
         self.group_stage_path.parent.mkdir(parents=True, exist_ok=True)
         self.migrate_ids()
         self.bootstrap()
@@ -244,6 +246,49 @@ class Brackets(Storage):
         self.commit_gs(gs)
         self.send_groupstage_brackets()
         self.send_group_stage_standings()
+
+    # ---- double elimination ----
+
+    def generate_double_elimination(self, teams: list) -> bool:
+        """generates the double elimination bracket for the teams (any number, at least 4)."""
+        bracket = double_elimination.build(teams)
+        self.commit_de(bracket)
+
+        brackets = self.read_meta()
+        brackets.active_round = "double-elimination"
+        brackets.total_rounds += 1
+        self.commit_meta(brackets)
+
+        self.send_double_elimination_brackets()
+        return True
+
+    def update_de_match(self, match: MatchSchema) -> None:
+        """updates a completed match of the double elimination bracket, and moves the teams along."""
+        bracket = self.read_de()
+        stored = double_elimination.find(bracket, match.bracket, match.round_id, match.match_id)
+        # the played values (scores, winner) are the ones to keep, the slots stay as they are.
+        for slot, played in zip(stored.teams, match.teams):
+            slot.score, slot.series = played.score, played.series
+        stored.winner_idx, stored.loser_idx = match.winner_idx, match.loser_idx
+        stored.last_scores = match.last_scores
+        stored.status = Status.COMPLETED
+        match.status = Status.COMPLETED
+
+        double_elimination.settle(bracket)
+        self.commit_de(bracket)
+        self.send_double_elimination_brackets()
+
+        if bracket.status == Status.COMPLETED:
+            self.announce_tournament_completion()
+
+    def save_de_match(self, match: MatchSchema) -> None:
+        """saves the progress (scores) of a match that is still being played."""
+        bracket = self.read_de()
+        stored = double_elimination.find(bracket, match.bracket, match.round_id, match.match_id)
+        for slot, played in zip(stored.teams, match.teams):
+            slot.score, slot.series = played.score, played.series
+        stored.last_scores = match.last_scores
+        self.commit_de(bracket)
 
     def update_ms_match(self, match: MatchSchema):
         """updates the match of the main-stage."""
@@ -474,6 +519,9 @@ class Brackets(Storage):
         from tournament import tournament
 
         db = tournament.read()
+        season = db.seasons.get(self.season_id)
+        if season:
+            season.stage = TournamentStage.COMPLETED
         db.active_season = "0"
         tournament.commit(db)
 
@@ -495,6 +543,14 @@ class Brackets(Storage):
         """sends the mainstage brackets."""
         data = {
             "type": "main-stage",
+            "season_id": self.season_id,
+        }
+        runner.run(data=data)
+
+    def send_double_elimination_brackets(self) -> None:
+        """sends the double elimination bracket."""
+        data = {
+            "type": "double-elimination",
             "season_id": self.season_id,
         }
         runner.run(data=data)
@@ -559,6 +615,12 @@ class Brackets(Storage):
     def commit_gs(self, data: GroupStageSchema) -> None:
         self.commit(data.to_dict(), self.group_stage_path)
 
+    def read_de(self) -> DoubleEliminationSchema:
+        return DoubleEliminationSchema.from_dict(self.read(self.double_elimination_path))
+
+    def commit_de(self, data: DoubleEliminationSchema) -> None:
+        self.commit(data.to_dict(), self.double_elimination_path)
+
     def read_ms(self, path: Path) -> RoundSchema:
         return RoundSchema.from_dict(self.read(path))
 
@@ -582,6 +644,9 @@ class Brackets(Storage):
                         for match in round.matches.values():
                             composite_id = f"{match.group_id}-{match.round_id}-{match.match_id}"
                             matches[composite_id] = match
+        elif round_path.name == "double-elimination.json":
+            for match in double_elimination.playable(self.read_de()):
+                matches[double_elimination.match_key(match)] = match
         else:
             round_data = self.read_ms(round_path)
             for match_id, match in round_data.matches.items():
@@ -620,7 +685,10 @@ class Brackets(Storage):
             team.score = series_length * 4
             team.series = series_length
             
-            if match.group_id:
+            if match.bracket:
+                # its a double elimination match.
+                self.update_de_match(match=match)
+            elif match.group_id:
                 # its a group stage match.
                 self.update_gs_match(
                     match = match,

@@ -148,7 +148,10 @@ class Manager:
         if not self.active_match:
             return
 
-        if self.active_match.match.group_id:
+        if self.active_match.match.bracket:
+            # its a double elimination match.
+            self.brackets.save_de_match(self.active_match.match)
+        elif self.active_match.match.group_id:
             # its a group stage match.
             gs = self.brackets.read_gs()
             gs.groups[self.active_match.match.group_id].rounds[self.active_match.match.round_id].matches[self.active_match.match.match_id] = self.active_match.match
@@ -179,7 +182,9 @@ class Manager:
 
         self.save_score()
 
-        if self.active_match.match.group_id:
+        if self.active_match.match.bracket:
+            self.brackets.update_de_match(match=self.active_match.match)
+        elif self.active_match.match.group_id:
             self.brackets.update_gs_match(
                 match = self.active_match.match,
             )
