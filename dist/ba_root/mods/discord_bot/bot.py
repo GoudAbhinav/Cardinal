@@ -397,13 +397,14 @@ class TournamentCommands(
             gs = brackets.read_gs()
             for group_name in gs.groups:
                 # check if the group already has a role.
-                role = discord.utils.get(guild.roles, name=group_name)
+                role_name = f"Group {group_name}"
+                role = discord.utils.get(guild.roles, name=role_name)
                 if role:
                     # if it does, delete it.
                     await role.delete()
                 # now we create the role.
                 role = await guild.create_role(
-                    name=group_name, mentionable=True,
+                    name=role_name, mentionable=True,
                 )
                 # now we can add the role id to the group.
                 gs.groups[group_name].role_id = role.id

@@ -93,6 +93,44 @@ def read_json(file_path: Path) -> dict:
         return json.load(f)
 
 
+# the matches are stored as {"teams": [{"idx", "name", "score", "series"}, ...], "winner_idx": ...},
+# the drawing code below reads flat "team1" / "team2" / "winner" values, this converts one into the other.
+
+
+def adapt_match(match: dict, missing=None) -> dict:
+    """adds team1, team2 and winner (names) to a stored match."""
+    teams = match.get("teams")
+    if not isinstance(teams, list) or len(teams) < 2:
+        return match
+    names = [team.get("name") for team in teams[:2]]
+    winner_idx = match.get("winner_idx")
+    winner = names[winner_idx] if winner_idx in (0, 1) else None
+    return {
+        **match,
+        "team1": names[0] if names[0] is not None else missing,
+        "team2": names[1] if names[1] is not None else missing,
+        "winner": winner,
+    }
+
+
+def adapt_round(round_data: dict, missing=None) -> dict:
+    """adapts all the matches of a round."""
+    matches = round_data.get("matches", {})
+    return {
+        **round_data,
+        "matches": {key: adapt_match(match, missing) for key, match in matches.items()},
+    }
+
+
+def adapt_group_stage(data: dict) -> dict:
+    """adapts all the matches of all the groups, a missing team (None) is a bye there."""
+    groups = {}
+    for group_id, group in data.get("groups", {}).items():
+        rounds = {key: adapt_round(rd) for key, rd in group.get("rounds", {}).items()}
+        groups[group_id] = {**group, "rounds": rounds}
+    return {**data, "groups": groups}
+
+
 def get_font(size, bold=False):
     path = BOLD if bold else REGULAR
     return ImageFont.truetype(path, size)
@@ -549,11 +587,11 @@ def _group_background():
 
 
 def standings_title(name):
-    return name.replace("_", " ").upper() + " STANDINGS"
+    return f"GROUP {name} STANDINGS".upper()
 
 
 def schedule_title(name):
-    return name.replace("_", " ").upper()
+    return f"GROUP {name}".upper()
 
 
 def _generate_single_group_standings(
@@ -669,22 +707,22 @@ def _generate_single_group_standings(
     with io.BytesIO() as image_buffer:
         img.convert("RGB").save(image_buffer, "PNG", optimize=True)
         image_buffer.seek(0)
-        files = webhook.create(f"standings_{group_name.lower()}.png", image_buffer)
+        files = webhook.create(f"standings_group-{group_name}.png", image_buffer)
 
         # firstly check if there have been a standings sent for this group.
-        data = webhook.get(f"standings_{group_name.lower()}")
+        data = webhook.get(f"standings_group-{group_name}")
         if data:
             # there is a standings already sent.
             # we will edit it.
-            webhook.edit(f"standings_{group_name.lower()}", files)
+            webhook.edit(f"standings_group-{group_name}", files)
             return
 
         # there is no standings sent yet, we will send a new one.
-        webhook.send("dashboard", f"standings_{group_name.lower()}", files)
+        webhook.send("dashboard", f"standings_group-{group_name}", files)
 
 
 def generate_group_standings(json_file: Path, webhook: Webhook) -> None:
-    data = read_json(json_file)
+    data = adapt_group_stage(read_json(json_file))
 
     groups = data.get("groups", {})
     winning_limit = int(data.get("winning_teams_per_group", 4))
@@ -870,17 +908,17 @@ def _generate_group_schedule(group_name: str, group_data: dict, webhook: Webhook
     with io.BytesIO() as image_buffer:
         img.convert("RGB").save(image_buffer, "PNG", optimize=True)
         image_buffer.seek(0)
-        files = webhook.create(f"{group_name.lower()}.png", image_buffer)
+        files = webhook.create(f"group-{group_name}.png", image_buffer)
 
         # firstly check if there have been a bracket sent for this group.
-        data = webhook.get(f"{group_name.lower()}")
+        data = webhook.get(f"group-{group_name}")
         if data:
             # there is a bracket already sent.
             # we will edit it.
-            webhook.edit(f"{group_name.lower()}", files, content=f"<@&{group_data['role_id']}>, Your brackets are here.")
+            webhook.edit(f"group-{group_name}", files, content=f"<@&{group_data['role_id']}>, Your brackets are here.")
             return
         # there is no bracket sent yet, we will send a new one.
-        webhook.send("brackets", f"{group_name.lower()}", files, content=f"<@&{group_data['role_id']}>, Your brackets are here.")
+        webhook.send("brackets", f"group-{group_name}", files, content=f"<@&{group_data['role_id']}>, Your brackets are here.")
 
 
 def _generate_group_overview(groups: dict, webhook: Webhook) -> None:
@@ -992,7 +1030,7 @@ def _generate_group_overview(groups: dict, webhook: Webhook) -> None:
 
 
 def generate_group_stage(json_file: Path, webhook: Webhook) -> None:
-    data = read_json(json_file)
+    data = adapt_group_stage(read_json(json_file))
 
     groups = data.get("groups", {})
     if not isinstance(groups, dict) or not groups:
@@ -1078,7 +1116,8 @@ def load_round_data(json_files: list) -> dict:
         if isinstance(filepath, str):
             filepath = Path(filepath)
         if filepath.exists():
-            rounds_data[filepath.name] = read_json(filepath)
+            # the main stage has no byes, a team that is not known yet is "TBD".
+            rounds_data[filepath.name] = adapt_round(read_json(filepath), "TBD")
     return rounds_data
 
 

@@ -1,5 +1,6 @@
 """storage for brackets"""
 
+import re
 from pathlib import Path
 
 from server.enums import Status
@@ -17,6 +18,7 @@ class Brackets(Storage):
         self.season_id = season_id
         self.group_stage_path = self.directory / "rounds" / "group-stage.json"
         self.group_stage_path.parent.mkdir(parents=True, exist_ok=True)
+        self.migrate_ids()
         self.bootstrap()
 
     def bootstrap(self):
@@ -24,6 +26,74 @@ class Brackets(Storage):
         self.registration = Registration(self.season_id)
         if not self.path.exists():
             self.commit_meta(BracketsMetaSchema())
+
+    # ---- ids ----
+    # groups, rounds and matches are named "1", "2", ... (older seasons used "group-1", "round 1",
+    # "m1", "match-1", "FINALS", "THIRD_PLACE"), this converts a season that still has the old names.
+
+    LEGACY_NUMBER = re.compile(r"^(?:group|round|match|m)?[-_ ]?(\d+)$", re.IGNORECASE)
+    LEGACY_FINALS = {"FINALS": "1", "THIRD_PLACE": "2"}
+
+    @classmethod
+    def normalize_id(cls, value):
+        """returns the numeric name of an id, ids that are already fine are returned as they are."""
+        if not isinstance(value, str):
+            return value
+        if value in cls.LEGACY_FINALS:
+            return cls.LEGACY_FINALS[value]
+        found = cls.LEGACY_NUMBER.match(value)
+        return found.group(1) if found else value
+
+    def migrate_ids(self) -> None:
+        """converts the files of this season to the numeric ids, if they are not already."""
+        rounds_dir = self.directory / "rounds"
+        for path in rounds_dir.glob("*.json"):
+            data = self.read(path)
+            if not data:
+                continue
+            if path.name == "group-stage.json":
+                changed = self._migrate_group_stage(data)
+            else:
+                changed = self._migrate_matches(data.get("matches"))
+            if changed:
+                self.commit(data, path)
+
+    def _migrate_matches(self, matches: dict | None) -> bool:
+        """renames the matches (and their ids) of a round in place."""
+        if not isinstance(matches, dict):
+            return False
+        changed = False
+        for key in list(matches):
+            match = matches[key]
+            new_key = self.normalize_id(key)
+            for field in ("match_id", "round_id", "group_id"):
+                if isinstance(match, dict) and match.get(field) is not None:
+                    new_value = self.normalize_id(match[field])
+                    if new_value != match[field]:
+                        match[field] = new_value
+                        changed = True
+            if new_key != key:
+                matches[new_key] = matches.pop(key)
+                changed = True
+        return changed
+
+    def _migrate_group_stage(self, data: dict) -> bool:
+        changed = False
+        groups = data.get("groups", {})
+        for group_key in list(groups):
+            group = groups[group_key]
+            rounds = group.get("rounds", {})
+            for round_key in list(rounds):
+                changed |= self._migrate_matches(rounds[round_key].get("matches"))
+                new_round_key = self.normalize_id(round_key)
+                if new_round_key != round_key:
+                    rounds[new_round_key] = rounds.pop(round_key)
+                    changed = True
+            new_group_key = self.normalize_id(group_key)
+            if new_group_key != group_key:
+                groups[new_group_key] = groups.pop(group_key)
+                changed = True
+        return changed
 
     def generate_group_stage(self, teams: list) -> None | bool:
         """generates the group stage brackets."""
@@ -53,7 +123,7 @@ class Brackets(Storage):
             winning_teams_per_group = winning_teams_per_group // 2
 
         for index in range(groups_count):
-            group_id = f"group-{index + 1}"
+            group_id = str(index + 1)
             groups[group_id] = GroupSchema(
                 rounds = self.generate_round_robin(
                     teams[index * teams_per_group : (index + 1) * teams_per_group],
@@ -98,16 +168,22 @@ class Brackets(Storage):
                 first = teams[i]  # first in sense of next front.
                 last = teams[count - 1 - i]  # last in sense of previous back.
 
-                match = self.create_match_format(team1=first, team2=last, match_id = f"match-{i + 1}",group_id=group_id, round_id=f"round {round}")
+                match = self.create_match_format(
+                    team1=first,
+                    team2=last,
+                    match_id=str(i + 1),
+                    group_id=group_id,
+                    round_id=str(round),
+                )
 
                 # if one of them is None, we give them BYEs.
                 if first is None or last is None:
                     match.status = Status.COMPLETED
                     match.winner_idx = 0 if last is None else 1
 
-                round_matches[f"match-{i + 1}"] = match
+                round_matches[match.match_id] = match
 
-            rounds[f"round-{round}"] = RoundSchema(matches = round_matches, status = Status.IN_PROGRESS if round == 1 else Status.PENDING)
+            rounds[str(round)] = RoundSchema(matches = round_matches, status = Status.IN_PROGRESS if round == 1 else Status.PENDING)
 
             # shuffle it so the teams dont get matched up with the same team twice.
             teams = [teams[0]] + [teams[-1]] + teams[1:-1]
@@ -135,7 +211,7 @@ class Brackets(Storage):
         # lets check if the round of all groups is completed.
         if all_groups_round_completed:
             # all matches are completed.
-            next_round_id = f"round {int(round_id.split()[1]) + 1}"
+            next_round_id = str(int(round_id) + 1)
 
             for g in gs.groups.values():
                 if round_id in g.rounds:
@@ -316,7 +392,9 @@ class Brackets(Storage):
         # we have the pairings now.
         matches = {}
         for index, (t1, t2) in enumerate(pairings, start=1):
-            matches[f"match-{index}"] = self.create_match_format(team1=t1, team2=t2, match_id = f"match-{index}")
+            matches[str(index)] = self.create_match_format(
+                team1=t1, team2=t2, match_id=str(index)
+            )
 
         return RoundSchema(matches = matches, status = Status.IN_PROGRESS)
 
@@ -363,23 +441,23 @@ class Brackets(Storage):
 
         if len(winners) == 2:
             # we just finished semi-finals.
-            # finals has two matches.. first is for 1st/2nd position between semi-finals winners
-            # second is for 3rd position between semi-finals losers
+            # finals has two matches.. "1" is for 1st/2nd position between semi-finals winners
+            # "2" is for 3rd position between semi-finals losers
             losers = [team.name for match in matches_data.values() for team in match.teams if team.idx == match.loser_idx]
 
-            next_matches["FINALS"] = self.create_match_format(
-                team1=winners[0], team2=winners[1], match_id = "FINALS"
+            next_matches["1"] = self.create_match_format(
+                team1=winners[0], team2=winners[1], match_id="1"
             )
-            next_matches["THIRD_PLACE"] = self.create_match_format(
-                team1=losers[0], team2=losers[1], match_id = "THIRD_PLACE"
+            next_matches["2"] = self.create_match_format(
+                team1=losers[0], team2=losers[1], match_id="2"
             )
 
         else:
             # standard rounds.
             match_count = 1
             for i in range(0, len(winners), 2):
-                next_matches[f"match-{match_count}"] = self.create_match_format(
-                    team1=winners[i], team2=winners[i + 1], match_id = f"match-{match_count}"
+                next_matches[str(match_count)] = self.create_match_format(
+                    team1=winners[i], team2=winners[i + 1], match_id=str(match_count)
                 )
                 match_count += 1
 
@@ -506,7 +584,9 @@ class Brackets(Storage):
                             matches[composite_id] = match
         else:
             round_data = self.read_ms(round_path)
-            matches.update(round_data.matches)
+            for match_id, match in round_data.matches.items():
+                # match ids repeat in every round, so the key carries the round too.
+                matches[f"{round_path.stem}-{match_id}"] = match
 
         return matches
 
