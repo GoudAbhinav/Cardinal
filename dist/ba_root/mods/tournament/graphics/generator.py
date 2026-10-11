@@ -1701,8 +1701,21 @@ def draw_de_card(img, d, box, match: dict, accent, font, label_font):
             center_text_box(d, (row[2] - 52, row[1], row[2] - 6, row[3]), str(slot.get("score", 0)), font, WHITE)
 
 
-def generate_double_elimination(json_file: Path, webhook: Webhook) -> None:
-    data = read_json(json_file)
+def read_rounds(season_dir: Path, bracket: str) -> dict:
+    """the rounds of a bracket (the files of its folder), as {round id: round}, in the order they are played."""
+    rounds = {}
+    for file in (season_dir / "rounds" / bracket).glob("*.json"):
+        rounds[file.stem] = read_json(file)
+    return dict(sorted(rounds.items(), key=lambda item: item[1].get("number", 0)))
+
+
+def generate_double_elimination(season_dir: Path, webhook: Webhook) -> None:
+    data = {
+        "winners": read_rounds(season_dir, "winners"),
+        "losers": read_rounds(season_dir, "losers"),
+        "grand_final": read_rounds(season_dir, "grand-final").get("1", {}),
+        "placements": read_json(season_dir / "brackets.json").get("placements", []),
+    }
     winners = data.get("winners", {})
     losers = data.get("losers", {})
     grand_final = data.get("grand_final", {}).get("matches", {})
@@ -1960,16 +1973,13 @@ if __name__ == "__main__":
         generate_group_stage(SEASON_DIR / "rounds" / "group-stage.json", webhook)
 
     elif data["type"] == "double-elimination":
-        generate_double_elimination(SEASON_DIR / "rounds" / "double-elimination.json", webhook)
+        generate_double_elimination(SEASON_DIR, webhook)
 
     elif data["type"] == "main-stage":
         # for main stage
-        files = [
-            file
-            for file in SEASON_DIR.glob("rounds/*.json")
-            if file.name not in ("group-stage.json", "double-elimination.json")
-        ]
-        sorted_files = sorted(files, key=lambda x: x.stat().st_ctime)
+        # the rounds are in the order they are played (the first one has the most matches).
+        rounds = read_rounds(SEASON_DIR, "main-stage")
+        sorted_files = [SEASON_DIR / "rounds" / "main-stage" / f"{name}.json" for name in rounds]
         generate_mainstage_bracket(
             json_files=sorted_files, webhook=webhook
         )

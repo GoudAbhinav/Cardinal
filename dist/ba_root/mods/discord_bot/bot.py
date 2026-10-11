@@ -424,7 +424,7 @@ class TournamentCommands(
         from tournament.brackets import Brackets
 
         brackets = Brackets(season_id=tournament.active_season)
-        if brackets.read_meta().active_round:
+        if brackets.read_meta().started:
             await interaction.response.send_message(
                 "The tournament is already started.",
                 ephemeral=True,

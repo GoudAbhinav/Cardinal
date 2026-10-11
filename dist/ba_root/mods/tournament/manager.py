@@ -31,6 +31,8 @@ class Manager:
             self.players.clear()
             return
         self.brackets = Brackets(season_id=season_id)
+        # repairs a bracket a crash only saved partly, before the matches are loaded.
+        self.brackets.refresh()
         self.load_pending_matches()
 
     def sync(self) -> None:
@@ -182,20 +184,14 @@ class Manager:
         if not self.active_match:
             return
 
-        if self.active_match.match.bracket:
-            # its a double elimination match.
-            self.brackets.save_de_match(self.active_match.match)
-        elif self.active_match.match.group_id:
+        if self.active_match.match.group_id:
             # its a group stage match.
             gs = self.brackets.read_gs()
             gs.groups[self.active_match.match.group_id].rounds[self.active_match.match.round_id].matches[self.active_match.match.match_id] = self.active_match.match
             self.brackets.commit_gs(gs)
         else:
-            # its a main stage match.
-            active_round_path = self.brackets.get_active_round_path()
-            ms = self.brackets.read_ms(active_round_path)
-            ms.matches[self.active_match.match.match_id] = self.active_match.match
-            self.brackets.commit_ms(ms, active_round_path)
+            # its a knockout stage match.
+            self.brackets.save_match(self.active_match.match)
 
     def handle_player_leave(self, account_id: str) -> None:
         """handles the player leaving."""
@@ -216,16 +212,12 @@ class Manager:
 
         self.save_score()
 
-        if self.active_match.match.bracket:
-            self.brackets.update_de_match(match=self.active_match.match)
-        elif self.active_match.match.group_id:
+        if self.active_match.match.group_id:
             self.brackets.update_gs_match(
                 match = self.active_match.match,
             )
         else:
-            self.brackets.update_ms_match(
-                match = self.active_match.match,
-            )
+            self.brackets.update_match(match=self.active_match.match)
 
         self.brackets.send_results(self.active_match.match, self.active_match.key)
         self.brackets.send_players_dashboard()

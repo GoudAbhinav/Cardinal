@@ -77,6 +77,9 @@ tmux
 - the winners champion meets the losers champion in the grand final, if the losers champion wins there is a second match (reset).
 - there is no third-place match, the team that loses the losers-bracket final is third (the final ranks are saved and drawn on the bracket image).
 - groups, rounds and matches are named "1", "2", ... in the files (the finals of single elimination are "1" and "2" for the final and third-place match).
+- both modes use the same structure: the whole knockout stage is built at the start, one file per round inside a folder per bracket:
+  `rounds/main-stage/` (single: `round-of-16.json`, `quarter-finals.json`, `semi-finals.json`, `finals.json`) or `rounds/winners/`, `rounds/losers/`, `rounds/grand-final/` (double: `1.json`, `2.json`, ...). the group stage is `rounds/group-stage.json`.
+  each empty slot says which match feeds it (`source`), when a match ends its teams are moved to the slots waiting for them. `brackets.json` keeps the mode, the rounds that can be played right now (`active_rounds`) and the final ranks.
 
 ## Tournament Commands:
 - /tournament create \<type> \<series> [mode] (creates a tournament season, mode is single or double elimination and defaults to single)

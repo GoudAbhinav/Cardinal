@@ -85,16 +85,8 @@ class RoundSchema(BaseSchema):
     """schema for a round."""
     matches: dict[str, MatchSchema] = field(default_factory=dict)
     status: Status = Status.PENDING
-
-@dataclass
-class DoubleEliminationSchema(BaseSchema):
-    """schema for a double elimination bracket: winners, losers and the grand final."""
-    winners: dict[str, RoundSchema] = field(default_factory=dict)
-    losers: dict[str, RoundSchema] = field(default_factory=dict)
-    grand_final: RoundSchema = field(default_factory=RoundSchema)
-    status: Status = Status.PENDING
-    # {"rank": 1, "team": "name"}, filled in when the bracket is completed.
-    placements: list[dict] = field(default_factory=list)
+    # the position of the round in its bracket (1 is the first), the round ids are not always numbers.
+    number: int = 0
 
 @dataclass
 class GroupSchema(BaseSchema):
@@ -114,8 +106,14 @@ class GroupStageSchema(BaseSchema):
 @dataclass
 class BracketsMetaSchema(BaseSchema):
     """schema for the brackets meta."""
-    active_round: str = ""
+    mode: TournamentMode = TournamentMode.SINGLE
+    started: bool = False
+    # the rounds that can be played right now, as "group-stage" or "<bracket>/<round>"
+    active_rounds: list[str] = field(default_factory=list)
     total_rounds: int = 0
+    status: Status = Status.PENDING
+    # {"rank": 1, "team": "name"}, filled in when the tournament is over.
+    placements: list[dict] = field(default_factory=list)
 
 @dataclass
 class MemberSchema(BaseSchema):
